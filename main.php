@@ -17,6 +17,11 @@ require_once __DIR__ . '/UserService.php';
 require_once __DIR__ . '/UserForm.php';
 require_once __DIR__ . '/UserController.php';
 
+// Carregar arquivo de administração apenas no painel admin
+if (is_admin()) {
+    require_once __DIR__ . '/admin/admin.php';
+}
+
 /**
  * Shortcode para exibir o formulário de criação de cliente.
  */
