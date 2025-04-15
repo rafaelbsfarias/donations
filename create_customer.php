@@ -1,18 +1,13 @@
 <?php
-if ( ! defined( 'ABSPATH' ) ) {
-    exit; // Exit if accessed directly.
+if (!defined('ABSPATH')) {
+    exit;
 }
 
-// Garante que a classe Settings esteja disponível (caso ainda não tenha sido carregada).
-if ( ! class_exists('Settings') ) {
-    require_once __DIR__ . '/settings.php';
-    $settings = new Settings();
-} else {
-    global $settings;
-    if ( ! isset( $settings ) ) {
-        $settings = new Settings();
-    }
-}
+require_once __DIR__ . '/settings.php';
+require_once __DIR__ . '/EncryptionHelper.php';
+
+// Recupera o objeto de configurações
+$settings = new Settings();
 
 class Asaas_API {
     private $api_url;
@@ -22,16 +17,17 @@ class Asaas_API {
         global $settings;
         $base_url = $settings->get('BASE_URL');
         $this->api_url = rtrim($base_url, '/') . '/customers';
-        $this->api_key = $settings->get('API_KEY');
+        $encryptedKey = get_option('donations_api_key_encrypted');
+        if ($encryptedKey && defined('SECRET_ENCRYPTION_KEY')) {
+            $this->api_key = EncryptionHelper::decrypt($encryptedKey, SECRET_ENCRYPTION_KEY);
+        } else {
+            $this->api_key = '';
+        }
+        // Debug temporário
+        error_log("Asaas_API: API key descriptografada = " . $this->api_key);
     }
 
-    /**
-     * Registra um novo cliente na Asaas.
-     *
-     * @param array $customer_data Dados do cliente.
-     * @return array|false Retorna a resposta decodificada ou false em caso de erro.
-     */
-    public function create_customer( $customer_data ) {
+    public function create_customer($customer_data) {
         $args = array(
             'headers' => array(
                 'Content-Type' => 'application/json',
@@ -39,47 +35,15 @@ class Asaas_API {
                 'accept'       => 'application/json',
                 'User-Agent'   => 'teste'
             ),
-            'body'    => wp_json_encode( $customer_data ),
+            'body'    => wp_json_encode($customer_data),
             'timeout' => 60,
         );
 
-        $response = wp_remote_post( $this->api_url, $args );
-
-        if ( is_wp_error( $response ) ) {
+        $response = wp_remote_post($this->api_url, $args);
+        if (is_wp_error($response)) {
             return false;
         }
-
-        $body = wp_remote_retrieve_body( $response );
-        $result = json_decode( $body, true );
-        return $result;
+        $body = wp_remote_retrieve_body($response);
+        return json_decode($body, true);
     }
 }
-
-function testar_asaas_create_customer() {
-    $asaas_api = new Asaas_API();
-    $customer_data = array(
-        'name'    => 'João da Silva4',
-        'email'   => 'joao.silva@example.com',
-        'cpfCnpj' => '24971563792'
-    );
-
-    $result = $asaas_api->create_customer($customer_data);
-
-    if ($result) {
-        return '<h3>Resultado Final:</h3><pre>' . print_r($result, true) . '</pre>';
-    } else {
-        $response = wp_remote_post($asaas_api->api_url, array(
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'access_token' => $asaas_api->api_key,
-                'accept'       => 'application/json',
-                'User-Agent'   => 'teste'
-            ),
-            'body'    => wp_json_encode($customer_data),
-            'timeout' => 60,
-        ));
-        $error_message = is_wp_error($response) ? $response->get_error_message() : wp_remote_retrieve_body($response);
-        return '<p>Erro ao registrar cliente: ' . esc_html($error_message) . '</p>';
-    }
-}
-add_shortcode( 'testar_asaas', 'testar_asaas_create_customer' );
