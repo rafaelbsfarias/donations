@@ -3,6 +3,7 @@ require_once 'create_customer.php'; // Garante que a classe Asaas_API esteja dis
 
 class UserService {
     private $asaasApi;
+    private static $request_counter = 0;
 
     public function __construct(Asaas_API $asaasApi) {
         $this->asaasApi = $asaasApi;
@@ -15,7 +16,12 @@ class UserService {
      * @return array|false
      */
     public function createUser(User $user) {
+        // Incrementar contador para ver quantas vezes a função é chamada
+        self::$request_counter++;
+        
         $data = $user->toArray();
-        return $this->asaasApi->create_customer($data);
+        $result = $this->asaasApi->create_customer($data);
+        
+        return $result;
     }
 }
