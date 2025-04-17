@@ -4,10 +4,56 @@ require_once __DIR__ . '/../settings.php';
 class FormularioPagamento {
     public function render() {
         ob_start();
-        ?>
-        <form method="POST" action="">
+        ?><style>
+        .formulario-pagamento {
+            max-width: 600px;
+            margin: 2rem auto;
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            font-family: 'Segoe UI', sans-serif;
+        }
+        .formulario-pagamento h2 {
+            color: #0056d2;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .formulario-pagamento label {
+            display: block;
+            font-weight: 600;
+            margin-top: 1rem;
+            color: #333;
+        }
+        .formulario-pagamento input,
+        .formulario-pagamento select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-top: 0.5rem;
+        }
+        .formulario-pagamento button {
+            margin-top: 2rem;
+            background-color: #0056d2;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            display: block;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+        .formulario-pagamento button:hover {
+            background-color: #0045b0;
+        }
+        </style>
+        <form method="POST" action="" class="formulario-pagamento">
             <?php wp_nonce_field('criar_pagamento_unico', 'pagamento_unico_nonce'); ?>
-
+            <h2>Doação</h2><br><br>
+            <p>Preencha as informações abaixo para realizar sua doação.<p><br><br>
             <label for="nome">Nome:</label><br>
             <input type="text" name="nome" required><br><br>
 
@@ -53,7 +99,7 @@ class FormularioPagamento {
                 <input type="text" name="phone" placeholder="(00) 00000-0000" required><br><br>
             </div>
 
-            <input type="submit" name="submit_pagamento_unico" value="Pagar">
+            <button type="submit" name="submit_pagamento_unico">Realizar doação</button>
         </form>
 
         <script>

@@ -27,7 +27,7 @@ class PagamentoUnicoController {
             // Sanitiza os campos de CEP, endereço e telefone
             $postalCode = sanitize_text_field($_POST['postalCode']);
             $phone = sanitize_text_field($_POST['phone']);
-            $addressNumber = sanitize_text_field($_POST['addressNumber']); // Novo campo
+            $addressNumber = sanitize_text_field($_POST['addressNumber']);
 
             // Dados do cliente
             $dadosCliente = [
@@ -85,7 +85,7 @@ class PagamentoUnicoController {
             } else {
                 $output .= '<p>Erro ao criar pagamento.</p>';
                 if (isset($cobranca['error'])) {
-                    $output .= '<pre>' . print_r($cobranca['error'], true) . '</pre>';
+                    $output .= '<p>Não foi possível processar seu pagamento. Por favor, verifique os dados e tente novamente.</p>';
                 }
             }
         }

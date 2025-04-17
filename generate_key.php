@@ -5,7 +5,7 @@ require_once 'encryptionHelper.php';
 
 // Certifique-se de definir a constante no seu wp-config.php ou aqui para o teste
 if (!defined('SECRET_ENCRYPTION_KEY')) {
-    define('SECRET_ENCRYPTION_KEY', 'sua-chave-secreta-muitosegura');
+    define('SECRET_ENCRYPTION_KEY', 'iGEn1y6EganOunlDk7iyw/ffCaoOHQHDYPIiHQHo68Y=');
 }
 
 // Insira aqui a sua API key em formato bruto

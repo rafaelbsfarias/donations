@@ -1,59 +1,80 @@
 <?php
 class UserForm {
     private static $form_counter = 0;
-    
-    /**
-     * Renderiza o formulário para cadastro do usuário.
-     *
-     * @return string HTML do formulário.
-     */
+
     public function render() {
         self::$form_counter++;
         $form_id = self::$form_counter;
-        
-        error_log("[DEBUG] UserForm::render - Renderizando formulário #{$form_id}");
-        
-        // Obter backtrace para ver de onde a função está sendo chamada
-        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
-        foreach ($backtrace as $index => $call) {
-            error_log("[DEBUG] UserForm::render #{$form_id} - Backtrace #{$index}: " 
-                . (isset($call['class']) ? $call['class'] . '::' : '') 
-                . $call['function'] . ' - File: ' 
-                . (isset($call['file']) ? $call['file'] : 'unknown') . ' Line: ' 
-                . (isset($call['line']) ? $call['line'] : 'unknown'));
-        }
-        
-        // Verificar se já temos uma submissão de formulário
-        $is_post_request = ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_user_form']));
-        error_log("[DEBUG] UserForm::render #{$form_id} - É uma requisição POST? " . ($is_post_request ? 'Sim' : 'Não'));
-        
-        $html = '<form method="post">';
 
-        // Campo nonce para segurança
+        $html = '<style>
+        .formulario-recorrente {
+            max-width: 600px;
+            margin: 2rem auto;
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            font-family: "Segoe UI", sans-serif;
+        }
+        .formulario-recorrente h2 {
+            color: #0056d2;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .formulario-recorrente label {
+            display: block;
+            font-weight: 600;
+            margin-top: 1rem;
+            color: #333;
+        }
+        .formulario-recorrente input[type="text"],
+        .formulario-recorrente input[type="email"],
+        .formulario-recorrente input[type="number"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-top: 0.5rem;
+        }
+        .formulario-recorrente input[type="submit"] {
+            margin-top: 2rem;
+            background-color: #0056d2;
+            color: #fff;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            display: block;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+        .formulario-recorrente input[type="submit"]:hover {
+            background-color: #0045b0;
+        }
+        </style>';
+
+        $html .= '<form method="post" class="formulario-recorrente">';
+        $html .= '<h2>Doação Mensal</h2>';
+        $html .= '<p>Preencha as informações abaixo para cadastrar uma doação recorrente. Fique tranquilo, essa modalidade de doação não ocupa o limite do seu cartão de credito.</p>';
         $html .= wp_nonce_field('create_user_action', 'create_user_nonce', true, false);
 
-        // Campos do cliente
-        $html .= '<p><label>Nome: <input type="text" name="user_name" required></label></p>';
-        $html .= '<p><label>Email: <input type="email" name="user_email" required></label></p>';
-        $html .= '<p><label>CPF/CNPJ: <input type="text" name="user_cpfcnpj" required></label></p>';
+        $html .= '<label>Nome:<input type="text" name="user_name" required></label>';
+        $html .= '<label>Email:<input type="email" name="user_email" required></label>';
+        $html .= '<label>CPF/CNPJ:<input type="text" name="user_cpfcnpj" required></label>';
 
-        // Informações do titular do cartão
-        $html .= '<p><label>Código Postal: <input type="text" name="user_postalCode" required></label></p>';
-        $html .= '<p><label>Número do Endereço: <input type="text" name="user_addressNumber" required></label></p>';
-        //$html .= '<p><label>Complemento do Endereço: <input type="text" name="user_addressComplement"></label></p>';
-        $html .= '<p><label>Telefone: <input type="text" name="user_phone" required></label></p>';
-        //$html .= '<p><label>Celular: <input type="text" name="user_mobilePhone"></label></p>';
-
-        // Detalhes do cartão
-        $html .= '<p><label>Número do Cartão: <input type="text" name="user_cardNumber" required></label></p>';
-        $html .= '<p><label>Mês de Validade: <input type="text" name="user_expiryMonth" required></label></p>';
-        $html .= '<p><label>Ano de Validade: <input type="text" name="user_expiryYear" required></label></p>';
-        $html .= '<p><label>Código de Segurança (CCV): <input type="text" name="user_ccv" required></label></p>';
-
-        $html .= '<p><input type="submit" name="submit_user_form" value="Criar Cliente"></p>';
-        $html .= '</form>';
+        $html .= '<label>Código Postal:<input type="text" name="user_postalCode" required></label>';
+        $html .= '<label>Número do Endereço:<input type="text" name="user_addressNumber" required></label>';
+        $html .= '<label>Telefone:<input type="text" name="user_phone" required></label>';
         
-        error_log("[DEBUG] UserForm::render #{$form_id} - Formulário renderizado");
+        $html .= '<p><label> Valor da Doação:<input type="number" name="user_value" step="0.01" min="1" required></label></p>';
+        $html .= '<label>Número do Cartão:<input type="text" name="user_cardNumber" required></label>';
+        $html .= '<label>Mês de Validade:<input type="text" name="user_expiryMonth" required></label>';
+        $html .= '<label>Ano de Validade:<input type="text" name="user_expiryYear" required></label>';
+        $html .= '<label>CCV:<input type="text" name="user_ccv" required></label>';
+
+        $html .= '<input type="submit" name="submit_user_form" value="Doar Agora">';
+        $html .= '</form>';
 
         return $html;
     }

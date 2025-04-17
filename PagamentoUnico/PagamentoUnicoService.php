@@ -18,7 +18,6 @@ class PagamentoUnicoService {
             try {
                 $this->apiKey = EncryptionHelper::decrypt($encryptedKey);
             } catch (Exception $e) {
-                error_log("PagamentoUnicoService: Erro ao descriptografar chave API: " . $e->getMessage());
                 // Fallback para a chave não criptografada
                 $this->apiKey = $settings->get('API_KEY', '');
             }
