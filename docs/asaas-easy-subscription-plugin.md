@@ -14,7 +14,7 @@ Este é o arquivo principal do plugin WordPress "Asaas Easy Subscription Plugin"
 - `asaas_easy_subscription_plugin_init()`: Função de inicialização chamada no hook `plugins_loaded`. Instancia `Asaas_Plugin_Loader` e chama seu método `init()`.
 
 ## Constantes Definidas
-- `ASAAS_PLUGIN_VERSION`: Versão atual do plugin (1.0.0).
+- `ASAAS_PLUGIN_VERSION`: Versão atual do plugin (1.1.0).
 - `ASAAS_PLUGIN_DIR`: Caminho absoluto do diretório do plugin.
 - `ASAAS_PLUGIN_URL`: URL do diretório do plugin.
 

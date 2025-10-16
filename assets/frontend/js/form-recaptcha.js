@@ -2,14 +2,25 @@
  * Funções para integração com reCAPTCHA
  */
 
+/**
+ * Funções para integração com reCAPTCHA
+ */
+
 (function() {
     'use strict';
+
+    // Estado global do formulário
+    let formState = {
+        isSubmitting: false,
+        recaptchaReady: false,
+        submitAttempts: 0
+    };
 
     /**
      * Inicializa a lógica do reCAPTCHA
      */
     function initializeRecaptchaLogic() {
-        // console.log('reCAPTCHA API pronta, inicializando lógica.');
+        console.log('ASAAS: Inicializando lógica reCAPTCHA');
 
         document.querySelectorAll('form.single-donation-form, form.recurring-donation-form').forEach(function(form) {
             if (form.dataset.submitListenerAttached === 'true') {
@@ -17,72 +28,139 @@
             }
             form.dataset.submitListenerAttached = 'true';
 
-            form.addEventListener('submit', function(event) {
-                event.preventDefault();
-
-                var submitButton = form.querySelector('button[type="submit"]');
-                if (submitButton && submitButton.disabled) {
-                    return;
-                }
-
-                if (submitButton) {
-                    submitButton.disabled = true;
-                    submitButton.textContent = 'Verificando segurança...';
-                }
-
-                // Gerar token reCAPTCHA antes de processar
-                generateRecaptchaToken(function(token) {
-                    if (token) {
-                        // Adicionar token ao formulário
-                        addRecaptchaTokenToForm(form, token);
-                        
-                        // Processar formulário via AJAX
-                        if (typeof AsaasFormAjax !== 'undefined' && typeof AsaasFormAjax.processDonationForm === 'function') {
-                            AsaasFormAjax.processDonationForm(form, 'Processando doação...');
-                        } else {
-                            alert('Erro: Sistema de processamento não encontrado.');
-                            if (submitButton) {
-                                submitButton.disabled = false;
-                                submitButton.textContent = 'Realizar Doação';
-                            }
-                        }
-                    } else {
-                        alert('Erro na verificação de segurança. Tente novamente.');
-                        if (submitButton) {
-                            submitButton.disabled = false;
-                            submitButton.textContent = 'Realizar Doação';
-                        }
-                    }
-                });
-            });
+            form.addEventListener('submit', handleFormSubmit);
         });
     }
 
     /**
-     * Gera token do reCAPTCHA
+     * Manipula o envio do formulário de forma unificada
      */
-    function generateRecaptchaToken(callback) {
-        if (typeof grecaptcha !== 'undefined' && grecaptcha.ready) {
-            grecaptcha.ready(function() {
-                var siteKey = asaasRecaptcha.siteKey;
-                if (!siteKey) {
-                    console.error('Chave do reCAPTCHA não configurada');
-                    callback(null);
-                    return;
-                }
-                
-                grecaptcha.execute(siteKey, {action: 'asaas_donation'})
-                .then(function(token) {
-                    callback(token);
-                }).catch(function(error) {
-                    console.error('Erro ao gerar token reCAPTCHA:', error);
-                    callback(null);
-                });
-            });
-        } else {
-            console.error('reCAPTCHA não está disponível');
-            callback(null);
+    function handleFormSubmit(event) {
+        event.preventDefault();
+
+        const form = event.target;
+        const submitButton = form.querySelector('button[type="submit"]');
+
+        // Verificar estado
+        if (formState.isSubmitting) {
+            console.log('ASAAS: Submissão já em progresso');
+            return;
         }
+
+        // Marcar como submitting
+        formState.isSubmitting = true;
+        formState.submitAttempts++;
+
+        updateButtonState(submitButton, true, 'Verificando segurança...');
+
+        // Verificar se reCAPTCHA está configurado
+        if (asaasRecaptcha && asaasRecaptcha.siteKey) {
+            console.log('ASAAS: reCAPTCHA configurado, executando validação');
+            handleRecaptchaFlow(form, submitButton);
+        } else {
+            console.log('ASAAS: reCAPTCHA não configurado, enviando diretamente');
+            // Fallback: enviar sem reCAPTCHA
+            submitFormDirectly(form, submitButton);
+        }
+    }
+
+    /**
+     * Gerencia o fluxo com reCAPTCHA
+     */
+    function handleRecaptchaFlow(form, submitButton) {
+        generateRecaptchaToken()
+            .then(token => {
+                if (token) {
+                    console.log('ASAAS: Token reCAPTCHA gerado com sucesso');
+                    addRecaptchaTokenToForm(form, token);
+                    submitFormDirectly(form, submitButton);
+                } else {
+                    // Fallback: continuar sem reCAPTCHA mas logar
+                    console.warn('ASAAS: Falha no reCAPTCHA, continuando sem token');
+                    logRecaptchaFailure(form);
+                    submitFormDirectly(form, submitButton);
+                }
+            })
+            .catch(error => {
+                console.error('ASAAS: Erro no reCAPTCHA:', error);
+                logRecaptchaFailure(form);
+                submitFormDirectly(form, submitButton);
+            });
+    }
+
+    /**
+     * Gera token do reCAPTCHA com promise
+     */
+    function generateRecaptchaToken() {
+        return new Promise((resolve, reject) => {
+            if (typeof grecaptcha !== 'undefined' && grecaptcha.ready) {
+                grecaptcha.ready(function() {
+                    var siteKey = asaasRecaptcha.siteKey;
+                    if (!siteKey) {
+                        console.error('ASAAS: Chave do reCAPTCHA não configurada');
+                        resolve(null);
+                        return;
+                    }
+
+                    grecaptcha.execute(siteKey, {action: 'asaas_donation'})
+                    .then(function(token) {
+                        resolve(token);
+                    }).catch(function(error) {
+                        console.error('ASAAS: Erro ao executar grecaptcha.execute:', error);
+                        resolve(null);
+                    });
+                });
+            } else {
+                console.error('ASAAS: grecaptcha não está disponível');
+                resolve(null);
+            }
+        });
+    }
+
+    /**
+     * Registra falha do reCAPTCHA para análise
+     */
+    function logRecaptchaFailure(form) {
+        // Enviar log para backend se possível
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+            const data = new FormData();
+            data.append('action', 'log_recaptcha_failure');
+            data.append('form_type', form.classList.contains('single-donation-form') ? 'single' : 'recurring');
+            data.append('user_agent', navigator.userAgent);
+            data.append('timestamp', Date.now());
+
+            navigator.sendBeacon(ajax_object.ajax_url, data);
+        }
+    }
+
+    /**
+     * Envia o formulário via AJAX
+     */
+    function submitFormDirectly(form, submitButton) {
+        if (typeof AsaasFormAjax !== 'undefined' && typeof AsaasFormAjax.processDonationForm === 'function') {
+            AsaasFormAjax.processDonationForm(form, 'Finalizando doação...');
+        } else {
+            console.error('ASAAS: AsaasFormAjax não disponível');
+            resetFormState(submitButton, 'Erro interno. Tente novamente.');
+        }
+    }
+
+    /**
+     * Atualiza estado do botão
+     */
+    function updateButtonState(button, isLoading, text) {
+        if (button) {
+            button.textContent = text;
+            button.disabled = isLoading;
+        }
+    }
+
+    /**
+     * Reseta estado do formulário
+     */
+    function resetFormState(submitButton, message) {
+        formState.isSubmitting = false;
+        updateButtonState(submitButton, false, message || 'Realizar Doação');
     }
 
     /**
@@ -90,21 +168,21 @@
      */
     function addRecaptchaTokenToForm(form, token) {
         let tokenInput = form.querySelector('input[name="g-recaptcha-response"]');
-        
+
         if (!tokenInput) {
             tokenInput = document.createElement('input');
             tokenInput.type = 'hidden';
             tokenInput.name = 'g-recaptcha-response';
             form.appendChild(tokenInput);
         }
-        
+
         tokenInput.value = token;
     }
 
     // Inicializar quando DOM estiver pronto
     document.addEventListener('DOMContentLoaded', function() {
         if (typeof asaasRecaptcha === 'undefined' || !asaasRecaptcha.siteKey) {
-            console.warn('reCAPTCHA não configurado - pulando inicialização');
+            console.warn('ASAAS: reCAPTCHA não configurado - pulando inicialização');
             return;
         }
 
@@ -119,12 +197,19 @@
                     initializeRecaptchaLogic();
                 }
             }, 100);
-            
+
             // Timeout após 10 segundos
             setTimeout(function() {
                 clearInterval(checkInterval);
-                console.error('Timeout aguardando reCAPTCHA');
+                console.error('ASAAS: Timeout aguardando reCAPTCHA');
             }, 10000);
         }
     });
+
+    // Expor funções para debug
+    window.AsaasRecaptchaDebug = {
+        getFormState: () => formState,
+        resetFormState: resetFormState,
+        initializeRecaptchaLogic: initializeRecaptchaLogic
+    };
 })();

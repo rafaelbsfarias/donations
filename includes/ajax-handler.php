@@ -21,6 +21,87 @@ function asaas_debug_log($message) {
 }
 
 /**
+ * Função helper para verificar token reCAPTCHA
+ */
+function verify_recaptcha_token($token, $secret) {
+    asaas_debug_log('ASAAS: Iniciando verificação do reCAPTCHA com token (primeiros 15 caracteres): ' . substr($token, 0, 15));
+    
+    $verify_url = 'https://www.google.com/recaptcha/api/siteverify';
+    $response = wp_remote_post($verify_url, [
+        'body' => [
+            'secret'   => $secret,
+            'response' => $token,
+            'remoteip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : ''
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        asaas_debug_log('ASAAS: Erro na comunicação com API reCAPTCHA: ' . $response->get_error_message());
+        return false;
+    }
+
+    $result = json_decode(wp_remote_retrieve_body($response), true);
+    $response_code = wp_remote_retrieve_response_code($response);
+    
+    asaas_debug_log('ASAAS: Resposta da API do reCAPTCHA (HTTP ' . $response_code . '): ' . json_encode($result));
+
+    // Verificar sucesso básico
+    if (!isset($result['success']) || !$result['success']) {
+        $error_codes = isset($result['error-codes']) ? implode(', ', $result['error-codes']) : 'desconhecido';
+        asaas_debug_log('ASAAS: Falha na verificação do reCAPTCHA. Códigos de erro: ' . $error_codes);
+        return false;
+    }
+    
+    // Verificação adicional de score (apenas para v3)
+    if (isset($result['score'])) {
+        $ip_address = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown_ip';
+        $action = isset($result['action']) ? $result['action'] : '';
+        
+        asaas_debug_log('ASAAS: reCAPTCHA v3 score: ' . $result['score']);
+        if ($result['score'] < 0.3) { // Score muito baixo - provável bot
+            asaas_debug_log('ASAAS: Score reCAPTCHA muito baixo: ' . $result['score']);
+            // Registrar no log de segurança
+            asaas_log_recaptcha_score($ip_address, $result['score'], $action, true);
+            asaas_log_blocked_ip($ip_address, ['recaptcha_score_muito_baixo']);
+            return false;
+        } else if ($result['score'] < 0.5) {
+            // Score baixo mas não crítico - apenas log
+            asaas_debug_log('ASAAS: Score reCAPTCHA baixo, mas aceitável: ' . $result['score']);
+            asaas_log_recaptcha_score($ip_address, $result['score'], $action, false);
+            asaas_log_suspicious_attempt($ip_address, ['recaptcha_score_baixo'], [
+                'score' => $result['score'],
+                'action' => $action
+            ]);
+        } else {
+            // Score aceitável - registrar para análise
+            asaas_log_recaptcha_score($ip_address, $result['score'], $action, false);
+        }
+    }
+    
+    asaas_debug_log('ASAAS: reCAPTCHA verificado com sucesso.');
+    return true;
+}
+
+/**
+ * Registra falha do reCAPTCHA para análise
+ */
+function asaas_log_recaptcha_failure($data) {
+    $log_entry = sprintf(
+        "[%s] reCAPTCHA Failure - Reason: %s, IP: %s, User-Agent: %s, Form: %s\n",
+        date('Y-m-d H:i:s'),
+        $data['reason'] ?? 'unknown',
+        $data['ip'] ?? 'unknown',
+        substr($data['user_agent'] ?? '', 0, 100),
+        $data['form_type'] ?? 'unknown'
+    );
+
+    // Log em arquivo separado para facilitar análise
+    $log_file = WP_CONTENT_DIR . '/asaas-recaptcha-failures.log';
+    @file_put_contents($log_file, $log_entry, FILE_APPEND | LOCK_EX);
+}
+
+/**
  * Registra o handler AJAX
  */
 function asaas_register_ajax_handler() {
@@ -38,14 +119,14 @@ function asaas_process_donation() {
 
     // 1. Garantir que é uma requisição POST e que contém dados
     if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST' || empty($_POST)) {
-        error_log('ASAAS: Requisição não é POST ou não contém dados.');
+        asaas_debug_log('ASAAS: Requisição não é POST ou não contém dados.');
         wp_send_json_error([
             'message' => __('Requisição inválida.', 'asaas-easy-subscription-plugin')
         ]);
         wp_die();
     }
     // Log das chaves POST recebidas para depuração (não logar valores diretamente por segurança)
-    error_log('ASAAS: Chaves POST recebidas: ' . json_encode(array_keys($_POST)));
+    asaas_debug_log('ASAAS: Chaves POST recebidas: ' . json_encode(array_keys($_POST)));
 
     // 2. Verificação de Nonce (Primária e Obrigatória)
     // A constante NONCE_FIELD deve estar definida em Asaas_Nonce_Manager
@@ -74,113 +155,60 @@ function asaas_process_donation() {
     }
     asaas_debug_log('ASAAS: Nonce (' . $nonce_field_name . ') verificado com sucesso para a ação: ' . $donation_type_action);
 
-    // 3. Verificação do reCAPTCHA com debug e tratamento de erros melhorado
+    // 3. Verificação do reCAPTCHA com fallback e tratamento de erros melhorado
     $recaptcha_token = isset($_POST['g-recaptcha-response']) ? sanitize_text_field(wp_unslash($_POST['g-recaptcha-response'])) : '';
     $recaptcha_secret = get_option('asaas_recaptcha_secret_key');
     
     asaas_debug_log('ASAAS: Validando token reCAPTCHA. Token presente: ' . (!empty($recaptcha_token) ? 'Sim (' . strlen($recaptcha_token) . ' chars)' : 'Não'));
     asaas_debug_log('ASAAS: Chave secreta reCAPTCHA configurada: ' . (!empty($recaptcha_secret) ? 'Sim' : 'Não'));
     
-    // Novo: Verificação de chave válida
-    if (!preg_match('/^6[A-Za-z0-9_-]{38}$/', $recaptcha_secret)) {
-        error_log('ASAAS: ALERTA - Formato da chave secreta reCAPTCHA parece inválido');
-    }
-
-    // Prosseguir com a verificação do reCAPTCHA apenas se a chave secreta estiver configurada
-    if (!empty($recaptcha_secret)) {
+    // Verificar se reCAPTCHA está configurado (site key + secret key)
+    $recaptcha_configured = !empty($recaptcha_secret) && !empty(get_option('asaas_recaptcha_site_key'));
+    
+    if ($recaptcha_configured) {
+        asaas_debug_log('ASAAS: reCAPTCHA configurado, executando verificação');
+        
+        // Novo: Verificação de chave válida
+        if (!preg_match('/^6[A-Za-z0-9_-]{38}$/', $recaptcha_secret)) {
+            asaas_debug_log('ASAAS: ALERTA - Formato da chave secreta reCAPTCHA parece inválido');
+        }
+        
+        // Verificar se token foi fornecido
         if (empty($recaptcha_token)) {
-            error_log('ASAAS: Token reCAPTCHA não fornecido, mas a chave secreta do reCAPTCHA está configurada.');
-            wp_send_json_error([
-                'message' => __('Verificação de segurança (reCAPTCHA) falhou. Token não recebido.', 'asaas-easy-subscription-plugin')
-            ]);
-            wp_die();
-        }
-
-        error_log('ASAAS: Iniciando verificação do reCAPTCHA com token (primeiros 15 caracteres): ' . substr($recaptcha_token, 0, 15));
-        
-        $verify_url = 'https://www.google.com/recaptcha/api/siteverify';
-        $response = wp_remote_post($verify_url, [
-            'body' => [
-                'secret'   => $recaptcha_secret,
-                'response' => $recaptcha_token,
-                'remoteip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : ''
-            ],
-            'timeout' => 15
-        ]);
-
-        if (is_wp_error($response)) {
-            error_log('ASAAS: Erro na comunicação com API reCAPTCHA: ' . $response->get_error_message());
-            wp_send_json_error([
-                'message' => __('Erro ao conectar com o serviço de verificação de segurança. Tente novamente.', 'asaas-easy-subscription-plugin'),
-                'debug' => WP_DEBUG ? $response->get_error_message() : null
-            ]);
-            wp_die();
-        }
-
-        $result = json_decode(wp_remote_retrieve_body($response), true);
-        $response_code = wp_remote_retrieve_response_code($response);
-        
-        error_log('ASAAS: Resposta da API do reCAPTCHA (HTTP ' . $response_code . '): ' . json_encode($result));
-
-        // Aplicar verificação do reCAPTCHA com tratamento específico por código de erro
-        if (!isset($result['success']) || !$result['success']) {
-            $error_codes = isset($result['error-codes']) ? implode(', ', $result['error-codes']) : 'desconhecido';
-            $error_message = __('Verificação de segurança falhou. Por favor, tente novamente.', 'asaas-easy-subscription-plugin');
+            asaas_debug_log('ASAAS: Token reCAPTCHA não fornecido, mas reCAPTCHA está configurado');
+            asaas_debug_log('ASAAS: Aplicando fallback - continuando sem reCAPTCHA mas logando');
             
-            // Mensagens específicas para erros comuns
-            if (isset($result['error-codes']) && is_array($result['error-codes'])) {
-                if (in_array('timeout-or-duplicate', $result['error-codes'])) {
-                    $error_message = __('Token de segurança expirado. Por favor, envie o formulário novamente.', 'asaas-easy-subscription-plugin');
-                } elseif (in_array('invalid-input-secret', $result['error-codes'])) {
-                    error_log('ASAAS: ERRO CRÍTICO - Chave secreta do reCAPTCHA inválida!');
-                    $error_message = __('Erro na configuração do sistema. Por favor, informe ao administrador.', 'asaas-easy-subscription-plugin');
-                }
-            }
-            
-            error_log('ASAAS: Falha na verificação do reCAPTCHA. Códigos de erro: ' . $error_codes);
-            wp_send_json_error([
-                'message' => $error_message,
-                'debug' => WP_DEBUG ? $error_codes : null
+            // Log da falha para análise
+            asaas_log_recaptcha_failure([
+                'reason' => 'token_missing',
+                'ip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown',
+                'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '',
+                'form_type' => $donation_type_action
             ]);
-            wp_die();
-        }
-        
-        // Verificação adicional de score (apenas para v3)
-        if (isset($result['score'])) {
-            $ip_address = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown_ip';
-            $action = isset($result['action']) ? $result['action'] : '';
             
-            error_log('ASAAS: reCAPTCHA v3 score: ' . $result['score']);
-            if ($result['score'] < 0.3) { // Score muito baixo - provável bot
-                error_log('ASAAS: Score reCAPTCHA muito baixo: ' . $result['score']);
-                // Registrar no log de segurança
-                asaas_log_recaptcha_score($ip_address, $result['score'], $action, true);
-                asaas_log_blocked_ip($ip_address, ['recaptcha_score_muito_baixo']);
+            // Continuar processamento sem bloquear
+            asaas_debug_log('ASAAS: Continuando processamento sem verificação reCAPTCHA');
+        } else {
+            // Executar verificação completa do reCAPTCHA
+            $recaptcha_valid = verify_recaptcha_token($recaptcha_token, $recaptcha_secret);
+            
+            if (!$recaptcha_valid) {
+                asaas_debug_log('ASAAS: Verificação reCAPTCHA falhou, aplicando fallback');
+                asaas_log_recaptcha_failure([
+                    'reason' => 'verification_failed',
+                    'ip' => isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown',
+                    'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash($_SERVER['HTTP_USER_AGENT'])) : '',
+                    'form_type' => $donation_type_action
+                ]);
                 
-                wp_send_json_error([
-                    'message' => __('Verificação de segurança falhou. Por favor, tente novamente mais tarde.', 'asaas-easy-subscription-plugin')
-                ]);
-                wp_die();
-            } else if ($result['score'] < 0.5) {
-                // Score baixo mas não crítico - apenas log
-                error_log('ASAAS: Score reCAPTCHA baixo, mas aceitável: ' . $result['score']);
-                asaas_log_recaptcha_score($ip_address, $result['score'], $action, false);
-                asaas_log_suspicious_attempt($ip_address, ['recaptcha_score_baixo'], [
-                    'score' => $result['score'],
-                    'action' => $action
-                ]);
+                // Continuar processamento sem bloquear
+                asaas_debug_log('ASAAS: Continuando processamento apesar da falha reCAPTCHA');
             } else {
-                // Score aceitável - registrar para análise
-                asaas_log_recaptcha_score($ip_address, $result['score'], $action, false);
+                asaas_debug_log('ASAAS: reCAPTCHA verificado com sucesso');
             }
         }
-        
-        error_log('ASAAS: reCAPTCHA verificado com sucesso.');
     } else {
-        error_log('ASAAS: Chave secreta do reCAPTCHA não configurada. Pulando verificação do reCAPTCHA.');
-        // Se o reCAPTCHA for uma parte essencial da segurança, você pode querer bloquear aqui
-        // caso a chave secreta não esteja configurada, mas a chave do site esteja (indicando intenção de uso).
-        // Por enquanto, ele permite continuar se a chave secreta não estiver definida.
+        asaas_debug_log('ASAAS: reCAPTCHA não configurado completamente. Pulando verificação.');
     }
 
     // 4. Medidas Anti-Bot Adicionais
@@ -190,7 +218,7 @@ function asaas_process_donation() {
     // Verificação baseada no tempo de preenchimento
     if (isset($_POST['form_start_time'])) {
         $time_spent = time() - intval(sanitize_text_field(wp_unslash($_POST['form_start_time'])));
-        error_log("ASAAS: Tempo de preenchimento do formulário: {$time_spent} segundos");
+        asaas_debug_log("ASAAS: Tempo de preenchimento do formulário: {$time_spent} segundos");
         if ($time_spent < 3) { // Limiar pode ser ajustado
             $suspicious = true;
             $reasons[] = "preenchimento_muito_rapido ({$time_spent}s)";
@@ -201,7 +229,7 @@ function asaas_process_donation() {
     if (!empty($_POST['website']) || !empty($_POST['email_confirm'])) {
         $suspicious = true;
         $reasons[] = "honeypot_preenchido";
-        error_log('ASAAS: Campos honeypot preenchidos - provável bot.');
+        asaas_debug_log('ASAAS: Campos honeypot preenchidos - provável bot.');
     }
 
     // Verificação de velocidade de submissão por IP
@@ -209,7 +237,7 @@ function asaas_process_donation() {
     $ip_cache_key = 'asaas_submissions_' . md5($ip_addr_for_velocity);
     $submission_count = (int) get_transient($ip_cache_key); // get_transient retorna false se não existir, (int) converte para 0
     
-    error_log("ASAAS: Submissões recentes deste IP ({$ip_addr_for_velocity}): {$submission_count}");
+    asaas_debug_log("ASAAS: Submissões recentes deste IP ({$ip_addr_for_velocity}): {$submission_count}");
     if ($submission_count > 5) { // Limiar pode ser ajustado
         $suspicious = true;
         $reasons[] = "excesso_submissoes ({$submission_count})";
@@ -219,7 +247,7 @@ function asaas_process_donation() {
     if ($suspicious) {
         $ip_address = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : 'unknown_ip';
         
-        error_log('ASAAS: Submissão suspeita bloqueada - Razões: ' . implode(', ', $reasons));
+        asaas_debug_log('ASAAS: Submissão suspeita bloqueada - Razões: ' . implode(', ', $reasons));
         
         // Registrar no log de segurança
         asaas_log_blocked_ip($ip_address, $reasons);
@@ -238,7 +266,7 @@ function asaas_process_donation() {
         ]);
         wp_die();
     }
-    error_log('ASAAS: Verificações anti-bot adicionais passaram.');
+    asaas_debug_log('ASAAS: Verificações anti-bot adicionais passaram.');
 
     // 5. Processar Doação
     try {
@@ -249,7 +277,7 @@ function asaas_process_donation() {
         $processor = new Asaas_Form_Processor();
         $result = $processor->process_form($form_data_to_process);
         
-        error_log('ASAAS: Resultado do processamento pelo Form_Processor: ' . print_r($result, true));
+        asaas_debug_log('ASAAS: Resultado do processamento pelo Form_Processor: ' . print_r($result, true));
         
         if (isset($result['success']) && $result['success']) {
             $responseData = ['data' => $result['data'] ?? []];
@@ -262,7 +290,7 @@ function asaas_process_donation() {
                         ? __('QR Code PIX gerado com sucesso', 'asaas-easy-subscription-plugin')
                         : __('Pagamento PIX iniciado, aguardando dados do QR Code.', 'asaas-easy-subscription-plugin');
                     if (!(isset($result['data']['pix_code']) && !empty($result['data']['pix_code']))) {
-                        error_log('ASAAS: Aviso - Dados do PIX (pix_code/pix_text) não encontrados ou vazios para pagamento PIX.');
+                        asaas_debug_log('ASAAS: Aviso - Dados do PIX (pix_code/pix_text) não encontrados ou vazios para pagamento PIX.');
                     }
                     $responseData['payment_type'] = 'PIX';
                     break;
@@ -271,7 +299,7 @@ function asaas_process_donation() {
                         ? __('Boleto gerado com sucesso', 'asaas-easy-subscription-plugin')
                         : __('Pagamento com Boleto iniciado, aguardando link.', 'asaas-easy-subscription-plugin');
                     if (!(isset($result['data']['bank_slip_url']) && !empty($result['data']['bank_slip_url']))) {
-                         error_log('ASAAS: Aviso - bank_slip_url não encontrado ou vazio para pagamento BOLETO.');
+                         asaas_debug_log('ASAAS: Aviso - bank_slip_url não encontrado ou vazio para pagamento BOLETO.');
                     }
                     $responseData['payment_type'] = 'BOLETO';
                     break;
@@ -293,7 +321,7 @@ function asaas_process_donation() {
             ]);
         }
     } catch (Exception $e) {
-        error_log('ASAAS: Exceção no processamento da doação: ' . $e->getMessage() . ' Na linha: ' . $e->getLine() . ' Trace: ' . $e->getTraceAsString());
+        asaas_debug_log('ASAAS: Exceção no processamento da doação: ' . $e->getMessage() . ' Na linha: ' . $e->getLine() . ' Trace: ' . $e->getTraceAsString());
         wp_send_json_error([
             // Mensagem genérica para o usuário
             'message' => __('Ocorreu um erro inesperado ao processar sua doação. Por favor, tente novamente.', 'asaas-easy-subscription-plugin'),

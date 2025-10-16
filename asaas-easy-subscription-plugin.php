@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Asaas Easy Subscription Plugin
  * Description: Integração com o Asaas para pagamentos únicos e recorrentes.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Rafael
  * Text Domain: asaas-easy-subscription-plugin
  * Domain Path: /languages
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants.
-define('ASAAS_PLUGIN_VERSION', '1.0.0');
+define('ASAAS_PLUGIN_VERSION', '1.1.0');
 define('ASAAS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ASAAS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
